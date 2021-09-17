@@ -73,8 +73,8 @@ class DCN(nn.Module):
 
         self.train()
         for e in range(epoch):
-            for batch_idx, (data, _) in enumerate(train_loader):
-                batch_size = data.size()[0]
+            for batch_idx, (data, _, _) in enumerate(train_loader):
+                batch_size = data.shape[0]
                 data = data.to(self.device).view(batch_size, -1)
                 rec_X = self.autoencoder(data)
                 loss = self.criterion(data, rec_X)
@@ -95,7 +95,7 @@ class DCN(nn.Module):
 
         # Initialize clusters in self.kmeans after pre-training
         batch_X = []
-        for batch_idx, (data, _) in enumerate(train_loader):
+        for batch_idx, (data, _, _) in enumerate(train_loader):
             batch_size = data.size()[0]
             data = data.to(self.device).view(batch_size, -1)
             latent_X = self.autoencoder(data, latent=True)
@@ -107,7 +107,7 @@ class DCN(nn.Module):
 
     def fit(self, epoch, train_loader, verbose=True):
 
-        for batch_idx, (data, _) in enumerate(train_loader):
+        for batch_idx, (data, _, _) in enumerate(train_loader):
             batch_size = data.size()[0]
             data = data.view(batch_size, -1).to(self.device)
 
@@ -135,8 +135,8 @@ class DCN(nn.Module):
             self.optimizer.step()
 
             if verbose and batch_idx % self.args.log_interval == 0:
-                msg = 'Epoch: {:02d} | Batch: {:03d} | Loss: {:.3f} | Rec-' \
-                      'Loss: {:.3f} | Dist-Loss: {:.3f}'
+                msg = 'Epoch: {:02d} | Batch: {:03d} | Loss: {:.5f} | Rec-' \
+                      'Loss: {:.5f} | Dist-Loss: {:.5f}'
                 print(msg.format(epoch, batch_idx,
                                  loss.detach().cpu().numpy(),
                                  rec_loss, dist_loss))
