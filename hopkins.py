@@ -1,5 +1,7 @@
 import torch
 import argparse
+import random
+import os
 import numpy as np
 import pandas as pd
 from DCN import DCN
@@ -24,7 +26,6 @@ def fix_randomness(seed: int, deterministic: bool = False) -> None:
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
 
-fix_randomness(42, True)
 
 def getPreselections():
 
@@ -69,8 +70,8 @@ def evaluate(model, test_loader):
         cluster_pred.append(model.kmeans.update_assign(latent_X).reshape(-1, 1))
         latent_data.append(latent_X)
 
-    targets_true = np.vstack(targets_true).astype(np.int).reshape(-1)
-    cluster_pred = np.vstack(cluster_pred).astype(np.int).reshape(-1)
+    targets_true = np.vstack(targets_true).astype(int).reshape(-1)
+    cluster_pred = np.vstack(cluster_pred).astype(int).reshape(-1)
     latent_data  = np.vstack(latent_data)
 
     cluster_diff = (targets_true - cluster_pred).mean()
@@ -105,8 +106,9 @@ def solver(args, model, train_loader, test_loader):
     cdiff_list = []
 
     for e in range(args.epoch):
-        model.train()
+        model.train() 
         model.fit(e, train_loader)
+
         train_MSE,_ = evaluate(model, train_loader)  # evaluation on train_loader
         train_mse_list.append(train_MSE)
 
@@ -127,6 +129,7 @@ def plot_and_save(name, data_list, data2_list=None):
         plt.plot(data2_list, linewidth=2, label='train')
         plt.legend()
     plt.xlabel("Epoch")
+    plt.yscale('log')
     
     if name == 'MSE':
         ylabel = "MSE Reconstruction Loss"
@@ -145,7 +148,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deep Clustering Network')
 
     # Dataset parameters
-    parser.add_argument('--data', default='~whopkins/sigclustering/sigclustering/ccMET_noBackground.h5',
+    parser.add_argument('--data', default='/home/ekourlitis/group/ccMET_noBackground.h5',
                         help='dataset path')
     parser.add_argument('--input-dim', type=int, default=5,
                         help='input dimension')
@@ -187,8 +190,16 @@ if __name__ == '__main__':
     parser.add_argument('--log-interval', type=int, default=100,
                         help=('how many batches to wait before logging the '
                               'trainin````g status'))
+    parser.add_argument('--timing', action='store_true',
+                        help=('timing measurements configuration'))
 
     args = parser.parse_args()
+
+    # fix random seed
+    run_deterministic = True
+    if args.timing: 
+        run_deterministic = False
+    fix_randomness(42, run_deterministic)
 
     # Load data
     allSamps = pd.read_hdf(args.data)
@@ -277,7 +288,7 @@ if __name__ == '__main__':
     batch_size = args.batch_size
 
     testTrainFrac = 0.5
-    nEvents=aeData.shape[0]
+    nEvents = aeData.shape[0]
     nTrain = np.floor(nEvents*testTrainFrac)
     newNTrain = int(np.floor(nTrain/batch_size)*batch_size)
     msk = np.random.choice(nEvents, newNTrain, replace=False)
@@ -290,9 +301,9 @@ if __name__ == '__main__':
     test_targets = aeData['sampName'].map(signalsMap).to_numpy()[~msk]
     trainWeights = torch.Tensor(tempWeights.to_numpy()[msk])
     testWeights = torch.Tensor(tempWeights.to_numpy()[~msk])
-    if torch.cuda.is_available():
-        trainWeights = trainWeights.cuda()
-        testWeights = testWeights.cuda()
+    # if torch.cuda.is_available():
+    #     trainWeights = trainWeights.cuda()
+    #     testWeights = testWeights.cuda()
 
 
     trainDataset = torch.utils.data.TensorDataset(torch.Tensor(train_inputs),torch.Tensor(train_targets), trainWeights) # create your datset
@@ -300,12 +311,50 @@ if __name__ == '__main__':
     train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size)
     test_loader = torch.utils.data.DataLoader(testDataset, batch_size=batch_size) 
 
-    print('train size:',len(train_loader))
-    print('test size:',len(test_loader))
+    print('number of train batches:',len(train_loader))
+    print('number of test batches:',len(test_loader))
+
     # Main body
     model = DCN(args)
-    rec_loss_list, mse_list, cdiff_list, train_mse_list = solver(
-        args, model, train_loader, test_loader)
+
+    #################################################
+    
+    if args.timing:
+        # init loggers
+        starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        repetitions = 1000
+        timings = np.zeros(repetitions)
+
+        # pass random training tensor to wamp-up GPU
+        dataiter = iter(train_loader)
+        inputs, _, _ = dataiter.next()
+        inputs = inputs.cuda().view(inputs.shape[0], -1)
+        _ = model.autoencoder(inputs) # warm-up
+        torch.cuda.synchronize() # wait for warm-up to finish
+
+        # get random training tensor of batch = 1
+        input = inputs[random.randint(0, batch_size-1), :].view(1,-1)
+        # time it
+        with torch.no_grad():
+            model.eval()
+            for rep in range(repetitions):
+                starter.record() # start stopwatch
+                _ = model.autoencoder(input)
+                ender.record() # stop stopwatch
+                # wait for GPU to sync
+                torch.cuda.synchronize()
+                curr_time = starter.elapsed_time(ender)
+                timings[rep] = curr_time
+
+        print("Mean latency: %0.4f ms" % (np.mean(timings)))
+        print("Std latency: %0.4f ms" % (np.std(timings)))
+
+        exit(0)
+
+    #################################################
+
+    # train
+    rec_loss_list, mse_list, cdiff_list, train_mse_list = solver(args, model, train_loader, test_loader)
 
     # plot metrics calculated at evaluation on test_loader
     plot_and_save('MSE', mse_list, train_mse_list)
