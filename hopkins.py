@@ -1,4 +1,6 @@
 import torch
+import random
+import os
 import argparse
 import numpy as np
 import pandas as pd
@@ -37,7 +39,7 @@ def getPreselections():
 
 getPreselections()
 
-def evaluate(model, test_loader):
+def evaluate(model, test_loader, signals):
     mse = []
     targets_true = []
     cluster_pred = []
@@ -60,23 +62,20 @@ def evaluate(model, test_loader):
 
     cluster_diff = (targets_true - cluster_pred).mean()
 
-    fig,ax = plt.subplots(1,2,figsize=(16,12),dpi=80)
+    unq = np.unique(targets_true)
+    fig,ax = plt.subplots(len(unq),1,figsize=(12,8*len(unq)),dpi=80)
 
     x = latent_data[:,0]
     y = latent_data[:,1]
-    ax[0].scatter(x,y,c=targets_true)
-    ax[1].scatter(x,y,c=cluster_pred)
-
-    ax[0].set_title('truth cluster ID')
-    ax[0].set_xlabel('latent[0]')
-    ax[0].set_ylabel('latent[1]')
-    ax[0].set_xlim(x.min(),x.max())
-    ax[0].set_ylim(y.min(),y.max())
-    ax[1].set_title('predicted cluster ID')
-    ax[1].set_xlabel('latent[0]')
-    ax[1].set_ylabel('latent[1]')
-    ax[1].set_xlim(x.min(),x.max())
-    ax[1].set_ylim(y.min(),y.max())
+    x_min = x.min()
+    x_max = x.max()
+    y_min = y.min()
+    y_max = y.max()
+    for i in unq:
+        ax[i].hist2d(x[targets_true == i],y[targets_true == i],100,[[x_min,x_max],[y_min,y_max]],cmap='Reds')
+        ax[i].set_title(signals[i])
+        ax[i].set_xlabel('latent[0]')
+        ax[i].set_ylabel('latent[1]')
 
     fig.savefig('evaluate.png')
 
@@ -86,7 +85,7 @@ def evaluate(model, test_loader):
     return mse,cluster_diff
 
 
-def solver(args, model, train_loader, test_loader):
+def solver(args, model, train_loader, test_loader, signals):
 
     rec_loss_list = model.pretrain(train_loader, args.pre_epoch)
     print('pretrain clusters: ',model.kmeans.clusters)
@@ -98,7 +97,7 @@ def solver(args, model, train_loader, test_loader):
         model.fit(e, train_loader)
 
         model.eval()
-        MSE,CDIFF = evaluate(model, test_loader)  # evaluation on test_loader
+        MSE,CDIFF = evaluate(model, test_loader, signals)  # evaluation on test_loader
         mse_list.append(MSE)
         cdiff_list.append(CDIFF)
         
@@ -107,6 +106,17 @@ def solver(args, model, train_loader, test_loader):
 
     return rec_loss_list, mse_list, cdiff_list
 
+
+# set random seeds
+def fix_randomness(seed: int, deterministic: bool = False) -> None:
+    # pl.seed_everything(seed, workers=True)
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    if deterministic:
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":16:8"
+        torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True)
 
 if __name__ == '__main__':
 
@@ -156,6 +166,9 @@ if __name__ == '__main__':
                         help=('how many batches to wait before logging the '
                               'training status'))
 
+    parser.add_argument('--randseed',type=int,default=0,help='if set to nonzero value, fixes random seed in torch and numpy')
+
+
     args = parser.parse_args()
 
     print(f'data: {args.data}')
@@ -175,6 +188,10 @@ if __name__ == '__main__':
     print(f'n_jobs:         {args.n_jobs}')
     print(f'cuda:           {args.cuda}')
     print(f'log_interval:   {args.log_interval}')
+    print(f'randseed:       {args.randseed}')
+
+    if args.randseed != 0:
+        fix_randomness(args.randseed, True)
 
     # Load data
     allSamps = pd.read_hdf(args.data)
@@ -232,7 +249,7 @@ if __name__ == '__main__':
     scaledData[inputColumns] = scaledData[inputColumns] / maxvalue
     clusteringData = scaledData[trainBranches]
 
-    signals = ['sig_1300_1','sig_550_375', 'sig_900_600']
+    signals = ['sig_1300_1','sig_550_375'] #, 'sig_900_600']
     print('using only samples: ',signals)
     signalsMap = {}
     for i,signal in enumerate(signals):
@@ -286,4 +303,4 @@ if __name__ == '__main__':
     # Main body
     model = DCN(args)
     rec_loss_list, mse_list, cdiff_list = solver(
-        args, model, train_loader, test_loader)
+        args, model, train_loader, test_loader, signals)

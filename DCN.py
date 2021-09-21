@@ -52,14 +52,14 @@ class DCN(nn.Module):
         dist_loss = torch.tensor(0.).to(self.device)
         clusters = torch.FloatTensor(self.kmeans.clusters).to(self.device)
         for i in range(batch_size):
-            print(f'dist_loss: {i} latent: {latent_X[i]} clusters: {clusters[cluster_id[i]]}')
+            # print(f'dist_loss: {i} latent: {latent_X[i]} clusters: {clusters[cluster_id[i]]}')
             diff_vec = latent_X[i] - clusters[cluster_id[i]]
-            print(f'diff_vec: {diff_vec}')
+            # print(f'diff_vec: {diff_vec}')
             sample_dist_loss = torch.matmul(diff_vec.view(1, -1),
                                             diff_vec.view(-1, 1))
-            print(f'diff_vec: {sample_dist_loss}')
+            # print(f'diff_vec: {sample_dist_loss}')
             dist_loss += 0.5 * self.beta * torch.squeeze(sample_dist_loss)
-            print(f'dist_loss: {dist_loss}')
+            # print(f'dist_loss: {dist_loss}')
 
         return (rec_loss + dist_loss,
                 rec_loss.detach().cpu().numpy(),
