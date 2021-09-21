@@ -8,10 +8,23 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import adjusted_rand_score
 from sklearn.metrics import normalized_mutual_info_score
 import matplotlib.pyplot as plt
-
+import pdb
 import fnmatch,collections
 
 selections=collections.OrderedDict()
+
+# set random seeds
+def fix_randomness(seed: int, deterministic: bool = False) -> None:
+    # pl.seed_everything(seed, workers=True)
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    if deterministic:
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":16:8"
+        torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True)
+
+fix_randomness(42, True)
 
 def getPreselections():
 
@@ -81,18 +94,21 @@ def evaluate(model, test_loader):
     plt.close('all')
 
     mse = np.mean(mse)
-    return mse,cluster_diff
+    return mse, cluster_diff
 
 
 def solver(args, model, train_loader, test_loader):
 
     rec_loss_list = model.pretrain(train_loader, args.pre_epoch)
+    train_mse_list = []
     mse_list = []
     cdiff_list = []
 
     for e in range(args.epoch):
         model.train()
         model.fit(e, train_loader)
+        train_MSE,_ = evaluate(model, train_loader)  # evaluation on train_loader
+        train_mse_list.append(train_MSE)
 
         model.eval()
         MSE,CDIFF = evaluate(model, test_loader)  # evaluation on test_loader
@@ -102,7 +118,26 @@ def solver(args, model, train_loader, test_loader):
         print('\nEval Epoch: {:02d} | AE MSE: {:.5f} | CLUSTER ACCURACY: {:.5f} \n'.format(
             e, MSE,CDIFF))
 
-    return rec_loss_list, mse_list, cdiff_list
+    return rec_loss_list, mse_list, cdiff_list, train_mse_list
+
+def plot_and_save(name, data_list, data2_list=None):
+    plt.clf()
+    plt.plot(data_list, linewidth=2, label='test')
+    if data2_list is not None:
+        plt.plot(data2_list, linewidth=2, label='train')
+        plt.legend()
+    plt.xlabel("Epoch")
+    
+    if name == 'MSE':
+        ylabel = "MSE Reconstruction Loss"
+        savename = 'reco_loss.pdf'
+
+    elif name == 'CDIFF':
+        ylabel = "Mean Clusters Difference"
+        savename = 'cdiff.pdf'
+    
+    plt.ylabel(ylabel)
+    plt.savefig(savename, bbox_inches='tight')
 
 
 if __name__ == '__main__':
@@ -216,9 +251,27 @@ if __name__ == '__main__':
     # weights = bkgs['clus_weight']
     aeData = twoSigs[trainBranches]
     aeSampName = twoSigs['sampName']
-    tempWeights = twoSigs['clus_weight']
+
+    # I want to make the two samples balanced
+    # I'll calculate the total sum-of-weights for each sample and I'll scale with 1 over it
+    norm_weights = {}
+    for s in signals:
+        sumOfWeights = twoSigs[twoSigs.sampName == s].AnalysisWeight.sum()
+        norm_weights[s] = sumOfWeights
+
+    # add to new column called norm_weight
+    for s in signals:
+        norm_weight = norm_weights[s]
+        sampIndex = twoSigs.sampName == s
+        twoSigs.loc[sampIndex, 'norm_weight'] = twoSigs.loc[sampIndex, 'AnalysisWeight']/(norm_weight)
+
+    # tempWeights = twoSigs['AnalysisWeight']
+    # tempWeights = twoSigs['clus_weight']
+    tempWeights = twoSigs['norm_weight']
+
     print('aeData.shape: ',aeData.shape)
     print('aeData.column',aeData.columns) 
+    print('tempWeights.shape: ',tempWeights.shape)
     print('samples: ',aeSampName.unique())
 
     batch_size = args.batch_size
@@ -251,5 +304,9 @@ if __name__ == '__main__':
     print('test size:',len(test_loader))
     # Main body
     model = DCN(args)
-    rec_loss_list, mse_list, cdiff_list = solver(
+    rec_loss_list, mse_list, cdiff_list, train_mse_list = solver(
         args, model, train_loader, test_loader)
+
+    # plot metrics calculated at evaluation on test_loader
+    plot_and_save('MSE', mse_list, train_mse_list)
+    plot_and_save('CDIFF', cdiff_list)
