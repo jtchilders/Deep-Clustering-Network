@@ -5,8 +5,6 @@ import pandas as pd
 from DCN import DCN
 from sklearn.preprocessing import MinMaxScaler
 # from torchvision import datasets, transforms
-from sklearn.metrics import adjusted_rand_score
-from sklearn.metrics import normalized_mutual_info_score
 import matplotlib.pyplot as plt
 
 import fnmatch,collections
@@ -72,9 +70,13 @@ def evaluate(model, test_loader):
     ax[0].set_title('truth cluster ID')
     ax[0].set_xlabel('latent[0]')
     ax[0].set_ylabel('latent[1]')
+    ax[0].set_xlim(x.min(),x.max())
+    ax[0].set_ylim(y.min(),y.max())
     ax[1].set_title('predicted cluster ID')
     ax[1].set_xlabel('latent[0]')
     ax[1].set_ylabel('latent[1]')
+    ax[1].set_xlim(x.min(),x.max())
+    ax[1].set_ylim(y.min(),y.max())
 
     fig.savefig('evaluate.png')
 
@@ -87,6 +89,7 @@ def evaluate(model, test_loader):
 def solver(args, model, train_loader, test_loader):
 
     rec_loss_list = model.pretrain(train_loader, args.pre_epoch)
+    print('pretrain clusters: ',model.kmeans.clusters)
     mse_list = []
     cdiff_list = []
 
@@ -114,8 +117,6 @@ if __name__ == '__main__':
                         help='dataset path')
     parser.add_argument('--input-dim', type=int, default=5,
                         help='input dimension')
-    parser.add_argument('--n-classes', type=int, default=10,
-                        help='output dimension')
 
     # Training parameters
     parser.add_argument('--lr', type=float, default=1e-4,
@@ -137,12 +138,14 @@ if __name__ == '__main__':
     parser.add_argument('--beta', type=float, default=1,
                         help=('coefficient of the regularization term on '
                               'clustering'))
-    parser.add_argument('--hidden-dims', default=[500, 500, 2000],
-                        help='learning rate (default: 1e-4)')
-    parser.add_argument('--latent_dim', type=int, default=2,
+    parser.add_argument('--hidden-dims', type=int, nargs='+', default=[500, 500, 2000],
+                        help='encoder-decoder Linear layer shapes')
+    parser.add_argument('--latent-dim', type=int, default=2,
                         help='latent space dimension')
     parser.add_argument('--n-clusters', type=int, default=2,
                         help='number of clusters in the latent space')
+    parser.add_argument('--activation', default='LeakyReLU',
+                        help='activation for autoencoder')
 
     # Utility parameters
     parser.add_argument('--n-jobs', type=int, default=1,
@@ -154,6 +157,24 @@ if __name__ == '__main__':
                               'training status'))
 
     args = parser.parse_args()
+
+    print(f'data: {args.data}')
+    print(f'input_dim:      {args.input_dim}')
+    print(f'lr:             {args.lr}')
+    print(f'wd:             {args.wd}')
+    print(f'batch_size:     {args.batch_size}')
+    print(f'epoch:          {args.epoch}')
+    print(f'pre_epoch:      {args.pre_epoch}')
+    print(f'pretrain:       {args.pretrain}')
+    print(f'lamda:          {args.lamda}')
+    print(f'beta:           {args.beta}')
+    print(f'hidden_dims:    {args.hidden_dims}')
+    print(f'latent_dim:     {args.latent_dim}')
+    print(f'n_clusters:     {args.n_clusters}')
+    print(f'activation:     {args.activation}')
+    print(f'n_jobs:         {args.n_jobs}')
+    print(f'cuda:           {args.cuda}')
+    print(f'log_interval:   {args.log_interval}')
 
     # Load data
     allSamps = pd.read_hdf(args.data)
@@ -167,7 +188,7 @@ if __name__ == '__main__':
     #rawDataPresel = allSamps[myPresel].copy()
     sampSizes = {}
     sampYields = {}
-
+    print('sampNames: ',sorted(pd.unique(rawDataPresel.sampName)))
     for sampName in sorted(pd.unique(rawDataPresel.sampName)):
         sampIndex = rawDataPresel['sampName']==sampName
         sampYield = rawDataPresel[sampIndex].weight.sum()
@@ -193,16 +214,26 @@ if __name__ == '__main__':
     varListStr = '_'.join(trainBranches)
     # print('varListStr:',varListStr)
 
+    inputColumns = trainBranches.copy()
+    inputColumns.remove('sampName')
+
     scaledData = rawDataPresel.copy(deep=True)
     scalers = {}
+    maxvalue = 0.
     for column in trainBranches:
         if 'sampName' in column: continue
         # print('column: ',column)
-        scalers[column] = MinMaxScaler()
-        scaledData[[column]] = scalers[column].fit_transform(scaledData[[column]])
+        # scalers[column] = MinMaxScaler()
+        # scaledData[[column]] = scalers[column].fit_transform(scaledData[[column]])
+        colmax = scaledData[column].max()
+        if colmax > maxvalue:
+            maxvalue = colmax
+
+    scaledData[inputColumns] = scaledData[inputColumns] / maxvalue
     clusteringData = scaledData[trainBranches]
 
-    signals = ['sig_1300_1','sig_550_375']
+    signals = ['sig_1300_1','sig_550_375', 'sig_900_600']
+    print('using only samples: ',signals)
     signalsMap = {}
     for i,signal in enumerate(signals):
         signalsMap[signal] = i
@@ -211,6 +242,7 @@ if __name__ == '__main__':
         except:
             signalMask = scaledData.sampName == signal
     twoSigs = scaledData[signalMask]
+    # twoSigs = rawDataPresel[signalMask]
     #bkgs = scaledData[(scaledData.sampName=='bkg')].sample(1000)
     # aeData = bkgs[trainBranches]
     # weights = bkgs['clus_weight']
@@ -220,21 +252,23 @@ if __name__ == '__main__':
     print('aeData.shape: ',aeData.shape)
     print('aeData.column',aeData.columns) 
     print('samples: ',aeSampName.unique())
+    tmp = aeData.apply(lambda s: pd.Series([s.min(), s.max()],index=['min', 'max']))
+    print(f'tmp = {tmp}')
 
     batch_size = args.batch_size
 
-    testTrainFrac = 0.5
+    testTrainFrac = 0.7
     nEvents=aeData.shape[0]
     nTrain = np.floor(nEvents*testTrainFrac)
     newNTrain = int(np.floor(nTrain/batch_size)*batch_size)
     msk = np.random.choice(nEvents, newNTrain, replace=False)
-    inputColumns = trainBranches.copy()
-    inputColumns.remove('sampName')
+    
     train_inputs = aeData[inputColumns].to_numpy()[msk]
     train_targets = aeData['sampName'].map(signalsMap).to_numpy()[msk]
 
     test_inputs = aeData[inputColumns].to_numpy()[~msk]
     test_targets = aeData['sampName'].map(signalsMap).to_numpy()[~msk]
+
     trainWeights = torch.Tensor(tempWeights.to_numpy()[msk])
     testWeights = torch.Tensor(tempWeights.to_numpy()[~msk])
     if torch.cuda.is_available():

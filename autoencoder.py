@@ -16,6 +16,7 @@ class AutoEncoder(nn.Module):
         self.n_layers = len(self.dims_list)
         self.latent_dim = args.latent_dim
         self.n_clusters = args.n_clusters
+        self.activation = args.activation
 
         # Validation check
         assert self.n_layers % 2 > 0
@@ -28,7 +29,7 @@ class AutoEncoder(nn.Module):
                 layers.update(
                     {
                         'linear0': nn.Linear(self.input_dim, hidden_dim),
-                        'activation0': nn.ReLU()
+                        'activation0': getattr(nn,self.activation)()
                     }
                 )
             else:
@@ -36,12 +37,14 @@ class AutoEncoder(nn.Module):
                     {
                         'linear{}'.format(idx): nn.Linear(
                             self.hidden_dims[idx-1], hidden_dim),
-                        'activation{}'.format(idx): nn.ReLU(),
-                        'bn{}'.format(idx): nn.BatchNorm1d(
-                            self.hidden_dims[idx])
+                        'activation{}'.format(idx): getattr(nn,self.activation)(),
+                        # 'bn{}'.format(idx): nn.BatchNorm1d(
+                        #     self.hidden_dims[idx])
                     }
                 )
         self.encoder = nn.Sequential(layers)
+
+        print('encoder: ',self.encoder)
 
         # Decoder Network
         layers = OrderedDict()
@@ -52,6 +55,7 @@ class AutoEncoder(nn.Module):
                     {
                         'linear{}'.format(idx): nn.Linear(
                             hidden_dim, self.output_dim),
+                        # 'activation{}'.format(idx): nn.LeakyReLU(),
                     }
                 )
             else:
@@ -59,12 +63,13 @@ class AutoEncoder(nn.Module):
                     {
                         'linear{}'.format(idx): nn.Linear(
                             hidden_dim, tmp_hidden_dims[idx+1]),
-                        'activation{}'.format(idx): nn.ReLU(),
-                        'bn{}'.format(idx): nn.BatchNorm1d(
-                            tmp_hidden_dims[idx+1])
+                        'activation{}'.format(idx): getattr(nn,self.activation)(),
+                        # 'bn{}'.format(idx): nn.BatchNorm1d(
+                        #     tmp_hidden_dims[idx+1])
                     }
                 )
         self.decoder = nn.Sequential(layers)
+        print('decoder: ',self.decoder)
 
     def __repr__(self):
         repr_str = '[Structure]: {}-'.format(self.input_dim)
@@ -73,7 +78,8 @@ class AutoEncoder(nn.Module):
         repr_str += str(self.output_dim) + '\n'
         repr_str += '[n_layers]: {}'.format(self.n_layers) + '\n'
         repr_str += '[n_clusters]: {}'.format(self.n_clusters) + '\n'
-        repr_str += '[input_dims]: {}'.format(self.input_dim)
+        repr_str += '[input_dims]: {}'.format(self.input_dim) + '\n'
+        repr_str += '[activation]: {}'.format(self.activation)
         return repr_str
 
     def __str__(self):
