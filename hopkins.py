@@ -7,6 +7,7 @@ from sklearn.preprocessing import MinMaxScaler
 # from torchvision import datasets, transforms
 from sklearn.metrics import adjusted_rand_score
 from sklearn.metrics import normalized_mutual_info_score
+import matplotlib.pyplot as plt
 
 import fnmatch,collections
 
@@ -40,6 +41,9 @@ getPreselections()
 
 def evaluate(model, test_loader):
     mse = []
+    targets_true = []
+    cluster_pred = []
+    latent_data = []
     for data, target, weights in test_loader:
         data = data.to(model.device)
         latent_X = model.autoencoder(data, latent=True)
@@ -48,31 +52,57 @@ def evaluate(model, test_loader):
         pred_data = pred_data.detach().cpu().numpy()
 
         mse.append(torch.nn.functional.mse_loss(torch.as_tensor(pred_data),torch.as_tensor(data.detach().cpu().numpy())))
-        # y_test.append(pred_data.numpy())
-        # y_pred.append(model.kmeans.update_assign(latent_X).reshape(-1, 1))
+        targets_true.append(target)
+        cluster_pred.append(model.kmeans.update_assign(latent_X).reshape(-1, 1))
+        latent_data.append(latent_X)
 
+    targets_true = np.vstack(targets_true).astype(np.int).reshape(-1)
+    cluster_pred = np.vstack(cluster_pred).astype(np.int).reshape(-1)
+    latent_data  = np.vstack(latent_data)
+
+    cluster_diff = (targets_true - cluster_pred).mean()
+
+    fig,ax = plt.subplots(1,2,figsize=(16,12),dpi=80)
+
+    x = latent_data[:,0]
+    y = latent_data[:,1]
+    ax[0].scatter(x,y,c=targets_true)
+    ax[1].scatter(x,y,c=cluster_pred)
+
+    ax[0].set_title('truth cluster ID')
+    ax[0].set_xlabel('latent[0]')
+    ax[0].set_ylabel('latent[1]')
+    ax[1].set_title('predicted cluster ID')
+    ax[1].set_xlabel('latent[0]')
+    ax[1].set_ylabel('latent[1]')
+
+    fig.savefig('evaluate.png')
+
+    plt.close('all')
 
     mse = np.mean(mse)
-    return mse
+    return mse,cluster_diff
 
 
 def solver(args, model, train_loader, test_loader):
 
     rec_loss_list = model.pretrain(train_loader, args.pre_epoch)
     mse_list = []
+    cdiff_list = []
 
     for e in range(args.epoch):
         model.train()
         model.fit(e, train_loader)
 
         model.eval()
-        MSE = evaluate(model, test_loader)  # evaluation on test_loader
+        MSE,CDIFF = evaluate(model, test_loader)  # evaluation on test_loader
         mse_list.append(MSE)
+        cdiff_list.append(CDIFF)
         
-        print('\nEpoch: {:02d} | MSE: {:.5f} \n'.format(
-            e, MSE))
+        print('\nEval Epoch: {:02d} | AE MSE: {:.5f} | CLUSTER ACCURACY: {:.5f} \n'.format(
+            e, MSE,CDIFF))
 
-    return rec_loss_list, mse_list
+    return rec_loss_list, mse_list, cdiff_list
 
 
 if __name__ == '__main__':
@@ -92,9 +122,9 @@ if __name__ == '__main__':
                         help='learning rate (default: 1e-4)')
     parser.add_argument('--wd', type=float, default=5e-4,
                         help='weight decay (default: 5e-4)')
-    parser.add_argument('--batch-size', type=int, default=256,
+    parser.add_argument('--batch-size', type=int, default=25,
                         help='input batch size for training')
-    parser.add_argument('--epoch', type=int, default=300,
+    parser.add_argument('--epoch', type=int, default=30,
                         help='number of epochs to train')
     parser.add_argument('--pre-epoch', type=int, default=50, 
                         help='number of pre-train epochs')
@@ -142,11 +172,11 @@ if __name__ == '__main__':
         sampIndex = rawDataPresel['sampName']==sampName
         sampYield = rawDataPresel[sampIndex].weight.sum()
         if sampYield == 0:
-            print("Dropping", sampName)
+            # print("Dropping", sampName)
             rawDataPresel.drop(sampIndex)
         sampSizes[sampName] = rawDataPresel[sampIndex].shape[0]
         sampYields[sampName] = sampYield
-        print(sampName, round(sampYield,1), sampIndex.sum())
+        # print(sampName, round(sampYield,1), sampIndex.sum())
         
     maxYieldKey = max(sampYields, key=lambda k: sampYields[k])
     tempDFs = []
@@ -158,26 +188,38 @@ if __name__ == '__main__':
 
     # Tried adding more variables but this seems to cause a degradation in performance: only one signal cluster is found.
     # (two are expected based on the manually designed signal regions).
-    trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1jet', 'pT_2jet']#, 'pT_1cjet', 'pT_2cjet']# 'eT_miss']
+    trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1jet', 'pT_2jet', 'sampName']#, 'pT_1cjet', 'pT_2cjet']# 'eT_miss']
     #trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1cjet', 'pT_2cjet']#, 'eT_miss']
     varListStr = '_'.join(trainBranches)
-    print(varListStr)
+    # print('varListStr:',varListStr)
 
     scaledData = rawDataPresel.copy(deep=True)
     scalers = {}
     for column in trainBranches:
-        print(column)
+        if 'sampName' in column: continue
+        # print('column: ',column)
         scalers[column] = MinMaxScaler()
         scaledData[[column]] = scalers[column].fit_transform(scaledData[[column]])
     clusteringData = scaledData[trainBranches]
 
-    twoSigs = scaledData[(scaledData.sampName=='sig_1300_1') | ( scaledData.sampName=='sig_550_375')]
+    signals = ['sig_1300_1','sig_550_375']
+    signalsMap = {}
+    for i,signal in enumerate(signals):
+        signalsMap[signal] = i
+        try:
+            signalMask |= scaledData.sampName == signal
+        except:
+            signalMask = scaledData.sampName == signal
+    twoSigs = scaledData[signalMask]
     #bkgs = scaledData[(scaledData.sampName=='bkg')].sample(1000)
     # aeData = bkgs[trainBranches]
     # weights = bkgs['clus_weight']
     aeData = twoSigs[trainBranches]
+    aeSampName = twoSigs['sampName']
     tempWeights = twoSigs['clus_weight']
-    print(aeData.shape)
+    print('aeData.shape: ',aeData.shape)
+    print('aeData.column',aeData.columns) 
+    print('samples: ',aeSampName.unique())
 
     batch_size = args.batch_size
 
@@ -186,24 +228,28 @@ if __name__ == '__main__':
     nTrain = np.floor(nEvents*testTrainFrac)
     newNTrain = int(np.floor(nTrain/batch_size)*batch_size)
     msk = np.random.choice(nEvents, newNTrain, replace=False)
-    xTrain = aeData.to_numpy()[msk]
+    inputColumns = trainBranches.copy()
+    inputColumns.remove('sampName')
+    train_inputs = aeData[inputColumns].to_numpy()[msk]
+    train_targets = aeData['sampName'].map(signalsMap).to_numpy()[msk]
 
-    xTest = aeData.to_numpy()[~msk]
+    test_inputs = aeData[inputColumns].to_numpy()[~msk]
+    test_targets = aeData['sampName'].map(signalsMap).to_numpy()[~msk]
     trainWeights = torch.Tensor(tempWeights.to_numpy()[msk])
     testWeights = torch.Tensor(tempWeights.to_numpy()[~msk])
-    # trainWeights = torch.ones(msk.shape[0])
-    # testWeights = torch.ones((~msk).shape[0])
     if torch.cuda.is_available():
         trainWeights = trainWeights.cuda()
         testWeights = testWeights.cuda()
 
 
-    trainDataset = torch.utils.data.TensorDataset(torch.Tensor(xTrain),torch.Tensor(xTrain), trainWeights) # create your datset
-    testDataset = torch.utils.data.TensorDataset(torch.Tensor(xTest), torch.Tensor(xTest), testWeights) # create your datset
+    trainDataset = torch.utils.data.TensorDataset(torch.Tensor(train_inputs),torch.Tensor(train_targets), trainWeights) # create your datset
+    testDataset = torch.utils.data.TensorDataset(torch.Tensor(test_inputs), torch.Tensor(test_targets), testWeights) # create your datset
     train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size)
     test_loader = torch.utils.data.DataLoader(testDataset, batch_size=batch_size) 
 
+    print('train size:',len(train_loader))
+    print('test size:',len(test_loader))
     # Main body
     model = DCN(args)
-    rec_loss_list, mse_list = solver(
+    rec_loss_list, mse_list, cdiff_list = solver(
         args, model, train_loader, test_loader)

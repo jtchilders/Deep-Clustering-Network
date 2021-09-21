@@ -80,7 +80,7 @@ class DCN(nn.Module):
                 loss = self.criterion(data, rec_X)
 
                 if verbose and batch_idx % self.args.log_interval == 0:
-                    msg = 'Epoch: {:02d} | Batch: {:03d} | Rec-Loss: {:.3f}'
+                    msg = 'Epoch: {:02d} | Batch: {:03d} | Rec-Loss: {:.5f}'
                     print(msg.format(e, batch_idx,
                                      loss.detach().cpu().numpy()))
                     rec_loss_list.append(loss.detach().cpu().numpy())
@@ -107,7 +107,8 @@ class DCN(nn.Module):
 
     def fit(self, epoch, train_loader, verbose=True):
 
-        for batch_idx, (data, _, _) in enumerate(train_loader):
+
+        for batch_idx, (data, targets, weights) in enumerate(train_loader):
             batch_size = data.size()[0]
             data = data.view(batch_size, -1).to(self.device)
 
@@ -134,9 +135,11 @@ class DCN(nn.Module):
             loss.backward()
             self.optimizer.step()
 
+            
             if verbose and batch_idx % self.args.log_interval == 0:
-                msg = 'Epoch: {:02d} | Batch: {:03d} | Loss: {:.5f} | Rec-' \
-                      'Loss: {:.5f} | Dist-Loss: {:.5f}'
+                accuracy = (targets - cluster_id).numpy().mean()
+                msg = 'Train Epoch: {:02d} | Batch: {:03d} | Loss: {:.5f} | Rec-' \
+                      'Loss: {:.5f} | Dist-Loss: {:.5f} | Accuracy {:.5f}'
                 print(msg.format(epoch, batch_idx,
                                  loss.detach().cpu().numpy(),
-                                 rec_loss, dist_loss))
+                                 rec_loss, dist_loss, accuracy))
