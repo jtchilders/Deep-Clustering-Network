@@ -80,7 +80,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deep Clustering Network')
 
     # Dataset parameters
-    parser.add_argument('--data', default='ccMET_noBackground.h5',
+    parser.add_argument('--data', default='~whopkins/sigclustering/sigclustering/ccMET_noBackground.h5',
                         help='dataset path')
     parser.add_argument('--input-dim', type=int, default=5,
                         help='input dimension')
@@ -121,7 +121,7 @@ if __name__ == '__main__':
                         help='whether to use GPU')
     parser.add_argument('--log-interval', type=int, default=100,
                         help=('how many batches to wait before logging the '
-                              'training status'))
+                              'trainin````g status'))
 
     args = parser.parse_args()
 
