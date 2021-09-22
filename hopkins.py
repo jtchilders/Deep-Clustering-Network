@@ -1,9 +1,8 @@
 import torch
 import random
-import os
+import os, sys
 import argparse
 import random
-import os
 import numpy as np
 import pandas as pd
 from DCN import DCN
@@ -99,6 +98,9 @@ def evaluate(model, test_loader, signals=None):
 def solver(args, model, train_loader, test_loader, signals):
 
     rec_loss_list = model.pretrain(train_loader, args.pre_epoch)
+    # wait for pretrain to finish
+    if args.time_throughput:
+            torch.cuda.synchronize()
     print('pretrain clusters: ',model.kmeans.clusters)
 
     train_mse_list = []
@@ -107,8 +109,21 @@ def solver(args, model, train_loader, test_loader, signals):
     test_cdiff_list = []
 
     for e in range(args.epoch):
-        model.train() 
+        model.train()
+
+        # throughput measurement - start
+        if args.time_throughput:
+            starter, ender = torch.cuda.Event(enable_timing=True),   torch.cuda.Event(enable_timing=True)
+            starter.record()
+
         model.fit(e, train_loader)
+
+        # throughput measurement - end
+        if args.time_throughput:
+            ender.record()
+            torch.cuda.synchronize()
+            global total_throughput_time
+            total_throughput_time += starter.elapsed_time(ender)/1000
         
         model.eval()
         # evaluate on train data
@@ -202,35 +217,39 @@ if __name__ == '__main__':
     parser.add_argument('--log-interval', type=int, default=100,
                         help=('how many batches to wait before logging the '
                               'trainin````g status'))
-    parser.add_argument('--timing', action='store_true',
-                        help=('timing measurements configuration'))
+    parser.add_argument('--time-latency', action='store_true',
+                        help=('latency timing measurement configuration'))
+    parser.add_argument('--time-throughput', action='store_true',
+                        help=('throughput timing measurement configuration'))
     parser.add_argument('--randseed',type=int,default=0,help='if set to nonzero value, fixes random seed in torch and numpy')
 
     args = parser.parse_args()
 
     # print parameters
-    print(f'data: {args.data}')
-    print(f'input_dim:      {args.input_dim}')
-    print(f'lr:             {args.lr}')
-    print(f'wd:             {args.wd}')
-    print(f'batch_size:     {args.batch_size}')
-    print(f'epoch:          {args.epoch}')
-    print(f'pre_epoch:      {args.pre_epoch}')
-    print(f'pretrain:       {args.pretrain}')
-    print(f'lamda:          {args.lamda}')
-    print(f'beta:           {args.beta}')
-    print(f'hidden_dims:    {args.hidden_dims}')
-    print(f'latent_dim:     {args.latent_dim}')
-    print(f'n_clusters:     {args.n_clusters}')
-    print(f'activation:     {args.activation}')
-    print(f'n_jobs:         {args.n_jobs}')
-    print(f'cuda:           {args.cuda}')
-    print(f'log_interval:   {args.log_interval}')
-    print(f'randseed:       {args.randseed}')
+    print(f'data:               {args.data}')
+    print(f'input_dim:          {args.input_dim}')
+    print(f'lr:                 {args.lr}')
+    print(f'wd:                 {args.wd}')
+    print(f'batch_size:         {args.batch_size}')
+    print(f'epoch:              {args.epoch}')
+    print(f'pre_epoch:          {args.pre_epoch}')
+    print(f'pretrain:           {args.pretrain}')
+    print(f'lamda:              {args.lamda}')
+    print(f'beta:               {args.beta}')
+    print(f'hidden_dims:        {args.hidden_dims}')
+    print(f'latent_dim:         {args.latent_dim}')
+    print(f'n_clusters:         {args.n_clusters}')
+    print(f'activation:         {args.activation}')
+    print(f'n_jobs:             {args.n_jobs}')
+    print(f'cuda:               {args.cuda}')
+    print(f'log_interval:       {args.log_interval}')
+    print(f'randseed:           {args.randseed}')
+    print(f'time_latancy:       {args.time_latency}')
+    print(f'time_throughput:    {args.time_throughput}')
 
     # fix random seed
     run_deterministic = True
-    if args.timing: 
+    if args.time_latency or args.time_throughput: 
         run_deterministic = False
     if args.randseed != 0:
         fix_randomness(args.randseed, True)
@@ -336,15 +355,21 @@ if __name__ == '__main__':
     tmp = aeData.apply(lambda s: pd.Series([s.min(), s.max()],index=['min', 'max']))
     print(f'tmp = {tmp}')
 
-    # batch size to be used
+    # batch size and test/train fraction
     batch_size = args.batch_size
-
-    # test/train fraction
     testTrainFrac = 0.7
-
+    # config for throughput timing
+    # curently vaiable with the available data
+    if args.time_throughput:
+        batch_size = 4096
+        testTrainFrac = 0.9
+        args.epoch = 100
+        total_throughput_time = 0
+        
     # select events
     nEvents=aeData.shape[0]
     nTrain = np.floor(nEvents*testTrainFrac)
+    # use an integer number of batches, i.e. all batches used have the same number of events
     newNTrain = int(np.floor(nTrain/batch_size)*batch_size)
     msk = np.random.choice(nEvents, newNTrain, replace=False)
     
@@ -376,7 +401,7 @@ if __name__ == '__main__':
 
     #################################################
     
-    if args.timing:
+    if args.time_latency:
         # init loggers
         starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
         repetitions = 1000
@@ -406,7 +431,7 @@ if __name__ == '__main__':
         print("Mean latency: %0.4f ms" % (np.mean(timings)))
         print("Std latency: %0.4f ms" % (np.std(timings)))
 
-        exit(0)
+        sys.exit()
 
     #################################################
 
@@ -417,6 +442,10 @@ if __name__ == '__main__':
                                                                                              test_loader,
                                                                                              signals)
 
+    if args.time_throughput:
+        print("Measured throughput: %i instances/sec" % (args.epoch*batch_size/total_throughput_time))
+
     # plot metrics calculated at evaluation on test_loader
-    plot_and_save('MSE', test_mse_list, train_mse_list)
-    plot_and_save('CDIFF', test_cdiff_list)
+    if not args.time_throughput:
+        plot_and_save('MSE', test_mse_list, train_mse_list)
+        plot_and_save('CDIFF', test_cdiff_list)
