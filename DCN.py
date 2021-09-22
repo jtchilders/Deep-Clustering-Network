@@ -4,6 +4,7 @@ import numpy as np
 import torch.nn as nn
 from kmeans import batch_KMeans
 from autoencoder import AutoEncoder
+import matplotlib.pyplot as plt
 
 
 class DCN(nn.Module):
@@ -30,6 +31,9 @@ class DCN(nn.Module):
         self.kmeans = batch_KMeans(args)
         self.autoencoder = AutoEncoder(args).to(self.device)
 
+        print('autoencoder structure:')
+        print(self.autoencoder)
+
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.parameters(),
                                           lr=args.lr,
@@ -48,10 +52,14 @@ class DCN(nn.Module):
         dist_loss = torch.tensor(0.).to(self.device)
         clusters = torch.FloatTensor(self.kmeans.clusters).to(self.device)
         for i in range(batch_size):
+            # print(f'dist_loss: {i} latent: {latent_X[i]} clusters: {clusters[cluster_id[i]]}')
             diff_vec = latent_X[i] - clusters[cluster_id[i]]
+            # print(f'diff_vec: {diff_vec}')
             sample_dist_loss = torch.matmul(diff_vec.view(1, -1),
                                             diff_vec.view(-1, 1))
+            # print(f'diff_vec: {sample_dist_loss}')
             dist_loss += 0.5 * self.beta * torch.squeeze(sample_dist_loss)
+            # print(f'dist_loss: {dist_loss}')
 
         return (rec_loss + dist_loss,
                 rec_loss.detach().cpu().numpy(),
@@ -95,12 +103,21 @@ class DCN(nn.Module):
 
         # Initialize clusters in self.kmeans after pre-training
         batch_X = []
-        for batch_idx, (data, _, _) in enumerate(train_loader):
+        targets = []
+        for batch_idx, (data, target, _) in enumerate(train_loader):
             batch_size = data.size()[0]
             data = data.to(self.device).view(batch_size, -1)
             latent_X = self.autoencoder(data, latent=True)
             batch_X.append(latent_X.detach().cpu().numpy())
+            targets.append(target.detach().cpu().numpy())
         batch_X = np.vstack(batch_X)
+        targets = np.vstack(targets)
+
+        plt.scatter(batch_X[:,0],batch_X[:,1],c=targets)
+        plt.savefig('pretraining_latent.png')
+        plt.xlim(batch_X[:,0].min(),batch_X[:,0].max())
+        plt.ylim(batch_X[:,1].min(),batch_X[:,1].max())
+
         self.kmeans.init_cluster(batch_X)
 
         return rec_loss_list
@@ -143,3 +160,4 @@ class DCN(nn.Module):
                 print(msg.format(epoch, batch_idx,
                                  loss.detach().cpu().numpy(),
                                  rec_loss, dist_loss, accuracy))
+                print(f'clusters: {self.kmeans.clusters}')

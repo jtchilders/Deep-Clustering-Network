@@ -1,4 +1,6 @@
 import torch
+import random
+import os
 import argparse
 import random
 import os
@@ -7,8 +9,6 @@ import pandas as pd
 from DCN import DCN
 from sklearn.preprocessing import MinMaxScaler
 # from torchvision import datasets, transforms
-from sklearn.metrics import adjusted_rand_score
-from sklearn.metrics import normalized_mutual_info_score
 import matplotlib.pyplot as plt
 import pdb
 import fnmatch,collections
@@ -25,7 +25,6 @@ def fix_randomness(seed: int, deterministic: bool = False) -> None:
         os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":16:8"
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
-
 
 def getPreselections():
 
@@ -50,10 +49,9 @@ def getPreselections():
 
     selections["presel_2lep"]=selections['presel_common']+"*(nsignalLep==2)*(nbaselineLep==2)*(mll>81)*(mll<101)*(eT_miss<200)*(eT_miss_prime>250)*(minDPhi_4jetMET_prime>0.4)"
 
-
 getPreselections()
 
-def evaluate(model, test_loader):
+def evaluate(model, test_loader, signals=None):
     mse = []
     targets_true = []
     cluster_pred = []
@@ -76,72 +74,86 @@ def evaluate(model, test_loader):
 
     cluster_diff = (targets_true - cluster_pred).mean()
 
-    fig,ax = plt.subplots(1,2,figsize=(16,12),dpi=80)
+    if signals is not None:
+        unq = np.unique(targets_true)
+        fig,ax = plt.subplots(len(unq),1,figsize=(12,8*len(unq)),dpi=80)
 
-    x = latent_data[:,0]
-    y = latent_data[:,1]
-    ax[0].scatter(x,y,c=targets_true)
-    ax[1].scatter(x,y,c=cluster_pred)
+        x = latent_data[:,0]
+        y = latent_data[:,1]
+        x_min = x.min()
+        x_max = x.max()
+        y_min = y.min()
+        y_max = y.max()
+        for i in unq:
+            ax[i].hist2d(x[targets_true == i],y[targets_true == i],100,[[x_min,x_max],[y_min,y_max]],cmap='Reds')
+            ax[i].set_title(signals[i])
+            ax[i].set_xlabel('latent[0]')
+            ax[i].set_ylabel('latent[1]')
 
-    ax[0].set_title('truth cluster ID')
-    ax[0].set_xlabel('latent[0]')
-    ax[0].set_ylabel('latent[1]')
-    ax[1].set_title('predicted cluster ID')
-    ax[1].set_xlabel('latent[0]')
-    ax[1].set_ylabel('latent[1]')
-
-    fig.savefig('evaluate.png')
-
-    plt.close('all')
+        fig.savefig('evaluate.png')
+        plt.close('all')
 
     mse = np.mean(mse)
     return mse, cluster_diff
 
-
-def solver(args, model, train_loader, test_loader):
+def solver(args, model, train_loader, test_loader, signals):
 
     rec_loss_list = model.pretrain(train_loader, args.pre_epoch)
+    print('pretrain clusters: ',model.kmeans.clusters)
+
     train_mse_list = []
-    mse_list = []
-    cdiff_list = []
+    train_cdiff_list = []
+    test_mse_list = []
+    test_cdiff_list = []
 
     for e in range(args.epoch):
         model.train() 
         model.fit(e, train_loader)
-
-        train_MSE,_ = evaluate(model, train_loader)  # evaluation on train_loader
-        train_mse_list.append(train_MSE)
-
-        model.eval()
-        MSE,CDIFF = evaluate(model, test_loader)  # evaluation on test_loader
-        mse_list.append(MSE)
-        cdiff_list.append(CDIFF)
         
-        print('\nEval Epoch: {:02d} | AE MSE: {:.5f} | CLUSTER ACCURACY: {:.5f} \n'.format(
-            e, MSE,CDIFF))
+        model.eval()
+        # evaluate on train data
+        MSE, CDIFF = evaluate(model, train_loader)
+        train_mse_list.append(MSE)
+        train_cdiff_list.append(CDIFF)
+        # evaluate on test data
+        MSE, CDIFF = evaluate(model, test_loader, signals)
+        test_mse_list.append(MSE)
+        test_cdiff_list.append(CDIFF)
+        
+        print('\nEval Epoch: {:02d} | AE MSE: {:.5f} | CLUSTER ACCURACY: {:.5f} \n'.format(e, MSE,CDIFF))
 
-    return rec_loss_list, mse_list, cdiff_list, train_mse_list
+    return rec_loss_list, train_mse_list, train_cdiff_list, test_mse_list, test_cdiff_list
 
-def plot_and_save(name, data_list, data2_list=None):
+def plot_and_save(name, test_data_list, train_data_list=None):
     plt.clf()
-    plt.plot(data_list, linewidth=2, label='test')
-    if data2_list is not None:
-        plt.plot(data2_list, linewidth=2, label='train')
-        plt.legend()
+    plt.plot(test_data_list, linewidth=2, label='test')
+    if train_data_list is not None:
+        plt.plot(train_data_list, linewidth=2, label='train')
+    plt.legend()
     plt.xlabel("Epoch")
     plt.yscale('log')
     
     if name == 'MSE':
         ylabel = "MSE Reconstruction Loss"
-        savename = 'reco_loss.pdf'
+        savename = 'reco_loss.png'
 
     elif name == 'CDIFF':
         ylabel = "Mean Clusters Difference"
-        savename = 'cdiff.pdf'
+        savename = 'cdiff.png'
     
     plt.ylabel(ylabel)
     plt.savefig(savename, bbox_inches='tight')
 
+# set random seeds
+def fix_randomness(seed: int, deterministic: bool = False) -> None:
+    # pl.seed_everything(seed, workers=True)
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    if deterministic:
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":16:8"
+        torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True)
 
 if __name__ == '__main__':
 
@@ -152,8 +164,6 @@ if __name__ == '__main__':
                         help='dataset path')
     parser.add_argument('--input-dim', type=int, default=5,
                         help='input dimension')
-    parser.add_argument('--n-classes', type=int, default=10,
-                        help='output dimension')
 
     # Training parameters
     parser.add_argument('--lr', type=float, default=1e-4,
@@ -175,12 +185,14 @@ if __name__ == '__main__':
     parser.add_argument('--beta', type=float, default=1,
                         help=('coefficient of the regularization term on '
                               'clustering'))
-    parser.add_argument('--hidden-dims', default=[500, 500, 2000],
-                        help='learning rate (default: 1e-4)')
-    parser.add_argument('--latent_dim', type=int, default=2,
+    parser.add_argument('--hidden-dims', type=int, nargs='+', default=[500, 500, 2000],
+                        help='encoder-decoder Linear layer shapes')
+    parser.add_argument('--latent-dim', type=int, default=2,
                         help='latent space dimension')
     parser.add_argument('--n-clusters', type=int, default=2,
                         help='number of clusters in the latent space')
+    parser.add_argument('--activation', default='LeakyReLU',
+                        help='activation for autoencoder')
 
     # Utility parameters
     parser.add_argument('--n-jobs', type=int, default=1,
@@ -192,38 +204,62 @@ if __name__ == '__main__':
                               'trainin````g status'))
     parser.add_argument('--timing', action='store_true',
                         help=('timing measurements configuration'))
+    parser.add_argument('--randseed',type=int,default=0,help='if set to nonzero value, fixes random seed in torch and numpy')
 
     args = parser.parse_args()
+
+    # print parameters
+    print(f'data: {args.data}')
+    print(f'input_dim:      {args.input_dim}')
+    print(f'lr:             {args.lr}')
+    print(f'wd:             {args.wd}')
+    print(f'batch_size:     {args.batch_size}')
+    print(f'epoch:          {args.epoch}')
+    print(f'pre_epoch:      {args.pre_epoch}')
+    print(f'pretrain:       {args.pretrain}')
+    print(f'lamda:          {args.lamda}')
+    print(f'beta:           {args.beta}')
+    print(f'hidden_dims:    {args.hidden_dims}')
+    print(f'latent_dim:     {args.latent_dim}')
+    print(f'n_clusters:     {args.n_clusters}')
+    print(f'activation:     {args.activation}')
+    print(f'n_jobs:         {args.n_jobs}')
+    print(f'cuda:           {args.cuda}')
+    print(f'log_interval:   {args.log_interval}')
+    print(f'randseed:       {args.randseed}')
 
     # fix random seed
     run_deterministic = True
     if args.timing: 
         run_deterministic = False
-    fix_randomness(42, run_deterministic)
+    if args.randseed != 0:
+        fix_randomness(args.randseed, True)
 
     # Load data
     allSamps = pd.read_hdf(args.data)
 
+    # get selection
     presel = selections['presel_0lep_1cjet20'].replace('*', ' & ').replace('||', ' | ').replace('(', '(allSamps.').replace('allSamps.(', '(')
     print(presel)
     #print(sorted(branches))
     myPresel = (allSamps.passTightCleanDFFlag==1) & (allSamps.nj_good>=2) & ((allSamps.tcMeTCategory==1) | (allSamps.tcMeTCategory<0)) & (allSamps.pT_1jet>250) & (allSamps.num_bjets==0) & ((allSamps.GenFiltMET<100 ) |  (allSamps.RunNumber!=410470)) & (allSamps.nsignalLep==0) & (allSamps.nbaselineLep==0) & (allSamps.eT_miss>250) & (allSamps.minDPhi_4jetMET>0.4) & (allSamps.num_cjets20>=2)
 
+    # apply selection
     rawDataPresel = allSamps[eval(presel)].copy()
-    #rawDataPresel = allSamps[myPresel].copy()
     sampSizes = {}
     sampYields = {}
-
+    print('sampNames: ', sorted(pd.unique(rawDataPresel.sampName)))
     for sampName in sorted(pd.unique(rawDataPresel.sampName)):
         sampIndex = rawDataPresel['sampName']==sampName
         sampYield = rawDataPresel[sampIndex].weight.sum()
         if sampYield == 0:
-            # print("Dropping", sampName)
+            print("Dropping", sampName)
             rawDataPresel.drop(sampIndex)
         sampSizes[sampName] = rawDataPresel[sampIndex].shape[0]
         sampYields[sampName] = sampYield
         # print(sampName, round(sampYield,1), sampIndex.sum())
-        
+
+    # calculate weight to balance signal samples
     maxYieldKey = max(sampYields, key=lambda k: sampYields[k])
     tempDFs = []
     goodSamps = pd.unique(rawDataPresel.sampName)
@@ -232,38 +268,49 @@ if __name__ == '__main__':
         rawDataPresel.loc[sampIndex, 'clus_weight'] = rawDataPresel.loc[sampIndex, 'weight']*(sampYields[maxYieldKey]/sampYields[sampName])
         #print(rawDataPresel[sampIndex].clus_weight.sum())
 
+    # define training variables
     # Tried adding more variables but this seems to cause a degradation in performance: only one signal cluster is found.
     # (two are expected based on the manually designed signal regions).
     trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1jet', 'pT_2jet', 'sampName']#, 'pT_1cjet', 'pT_2cjet']# 'eT_miss']
-    #trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1cjet', 'pT_2cjet']#, 'eT_miss']
     varListStr = '_'.join(trainBranches)
     # print('varListStr:',varListStr)
 
+    # columns to be used, get rid of 'sampName'
+    inputColumns = trainBranches.copy()
+    inputColumns.remove('sampName')
+
+    # scale data: normalize to max value
     scaledData = rawDataPresel.copy(deep=True)
     scalers = {}
+    maxvalue = 0.
     for column in trainBranches:
         if 'sampName' in column: continue
-        # print('column: ',column)
-        scalers[column] = MinMaxScaler()
-        scaledData[[column]] = scalers[column].fit_transform(scaledData[[column]])
+        # scalers[column] = MinMaxScaler()
+        # scaledData[[column]] = scalers[column].fit_transform(scaledData[[column]])
+        colmax = scaledData[column].max()
+        if colmax > maxvalue:
+            maxvalue = colmax
+    scaledData[inputColumns] = scaledData[inputColumns] / maxvalue
+
+    # data for clustering
     clusteringData = scaledData[trainBranches]
 
-    signals = ['sig_1300_1','sig_550_375']
+    # select signal samples
+    signals = ['sig_1300_1','sig_550_375'] #, 'sig_900_600']
+    print('using only samples: ',signals)
     signalsMap = {}
-    for i,signal in enumerate(signals):
+    for i, signal in enumerate(signals):
         signalsMap[signal] = i
         try:
             signalMask |= scaledData.sampName == signal
         except:
             signalMask = scaledData.sampName == signal
     twoSigs = scaledData[signalMask]
-    #bkgs = scaledData[(scaledData.sampName=='bkg')].sample(1000)
-    # aeData = bkgs[trainBranches]
-    # weights = bkgs['clus_weight']
+    # data for AE
     aeData = twoSigs[trainBranches]
     aeSampName = twoSigs['sampName']
 
-    # I want to make the two samples balanced
+    # I want to make the two samples balanced (similar as above...)
     # I'll calculate the total sum-of-weights for each sample and I'll scale with 1 over it
     norm_weights = {}
     for s in signals:
@@ -276,38 +323,48 @@ if __name__ == '__main__':
         sampIndex = twoSigs.sampName == s
         twoSigs.loc[sampIndex, 'norm_weight'] = twoSigs.loc[sampIndex, 'AnalysisWeight']/(norm_weight)
 
+    # select which weight to be used. In the current implementation of DCN this is not used anyways
     # tempWeights = twoSigs['AnalysisWeight']
     # tempWeights = twoSigs['clus_weight']
     tempWeights = twoSigs['norm_weight']
 
-    print('aeData.shape: ',aeData.shape)
-    print('aeData.column',aeData.columns) 
-    print('tempWeights.shape: ',tempWeights.shape)
-    print('samples: ',aeSampName.unique())
+    # print data characteristics
+    print('aeData.shape:', aeData.shape)
+    print('aeData.columns:', aeData.columns) 
+    print('tempWeights.shape:', tempWeights.shape)
+    print('samples:', aeSampName.unique())
+    tmp = aeData.apply(lambda s: pd.Series([s.min(), s.max()],index=['min', 'max']))
+    print(f'tmp = {tmp}')
 
+    # batch size to be used
     batch_size = args.batch_size
 
-    testTrainFrac = 0.5
-    nEvents = aeData.shape[0]
+    # test/train fraction
+    testTrainFrac = 0.7
+
+    # select events
+    nEvents=aeData.shape[0]
     nTrain = np.floor(nEvents*testTrainFrac)
     newNTrain = int(np.floor(nTrain/batch_size)*batch_size)
     msk = np.random.choice(nEvents, newNTrain, replace=False)
-    inputColumns = trainBranches.copy()
-    inputColumns.remove('sampName')
+    
+    # train np.arrays
     train_inputs = aeData[inputColumns].to_numpy()[msk]
     train_targets = aeData['sampName'].map(signalsMap).to_numpy()[msk]
 
+    # test np.arrays
     test_inputs = aeData[inputColumns].to_numpy()[~msk]
     test_targets = aeData['sampName'].map(signalsMap).to_numpy()[~msk]
+
+    # train & test weights. not used anyways
     trainWeights = torch.Tensor(tempWeights.to_numpy()[msk])
     testWeights = torch.Tensor(tempWeights.to_numpy()[~msk])
-    # if torch.cuda.is_available():
-    #     trainWeights = trainWeights.cuda()
-    #     testWeights = testWeights.cuda()
 
-
+    # torch TensorDatasets
     trainDataset = torch.utils.data.TensorDataset(torch.Tensor(train_inputs),torch.Tensor(train_targets), trainWeights) # create your datset
     testDataset = torch.utils.data.TensorDataset(torch.Tensor(test_inputs), torch.Tensor(test_targets), testWeights) # create your datset
+    
+    # torch DataLoaders
     train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size)
     test_loader = torch.utils.data.DataLoader(testDataset, batch_size=batch_size) 
 
@@ -354,8 +411,12 @@ if __name__ == '__main__':
     #################################################
 
     # train
-    rec_loss_list, mse_list, cdiff_list, train_mse_list = solver(args, model, train_loader, test_loader)
+    rec_loss_list, train_mse_list, train_cdiff_list, test_mse_list, test_cdiff_list = solver(args,
+                                                                                             model,
+                                                                                             train_loader,
+                                                                                             test_loader,
+                                                                                             signals)
 
     # plot metrics calculated at evaluation on test_loader
-    plot_and_save('MSE', mse_list, train_mse_list)
-    plot_and_save('CDIFF', cdiff_list)
+    plot_and_save('MSE', test_mse_list, train_mse_list)
+    plot_and_save('CDIFF', test_cdiff_list)
