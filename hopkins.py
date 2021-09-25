@@ -4,15 +4,13 @@ import os, sys
 import argparse
 import random
 import numpy as np
-import pandas as pd
 from DCN import DCN
-from sklearn.preprocessing import MinMaxScaler
 # from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import pdb
-import fnmatch,collections
-
-selections=collections.OrderedDict()
+from data import get_DataLoaders
+import globals
+globals.init()
 
 # set random seeds
 def fix_randomness(seed: int, deterministic: bool = False) -> None:
@@ -24,31 +22,6 @@ def fix_randomness(seed: int, deterministic: bool = False) -> None:
         os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":16:8"
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
-
-def getPreselections():
-
-    selections["1"]="(1)"
-    selections["presel_common"]="(passTightCleanDFFlag==1)*(nj_good>=2)*((tcMeTCategory==1)||(tcMeTCategory<0))*(pT_1jet>250)*(num_bjets==0)*((GenFiltMET<100 )|| (RunNumber!=410470))"
-
-    selections["presel_0lep"]=selections['presel_common']+"*(METTrigPassed)*(nsignalLep==0)*(nbaselineLep==0)*(eT_miss>250)*(minDPhi_4jetMET>0.4)"
-    
-    selections["presel_0lep_1cjet20"]=selections['presel_0lep']+"*(num_cjets20>=1)"
-    selections["presel_0lep_1cjet30"]=selections['presel_0lep']+"*(num_cjets30>=1)"
-    selections["presel_0lep_1cjet40"]=selections['presel_0lep']+"*(num_cjets40>=1)"
-    selections["presel_0lep_2cjet20"]=selections['presel_0lep']+"*(num_cjets20>=2)"
-    selections["presel_0lep_2cjet30"]=selections['presel_0lep']+"*(num_cjets30>=2)"
-    selections["presel_0lep_2cjet40"]=selections['presel_0lep']+"*(num_cjets40>=2)"
-
-    selections["SRA"]=selections['presel_0lep']+"*(num_cjets20>=2)*(MTcMin20>100)*(m_cc20>150)*(metsigST>5)"
-
-    selections["VRW"] = selections['presel_0lep_2cjet20']+'*(m_cc20>150)*(MTcMin20<100)'
-    selections["VRZ"] = selections['presel_0lep_2cjet20']+'*(m_cc20<150)*(MTcMin20>100)'
-    
-    selections["presel_1lep"]=selections['presel_common']+"*(METTrigPassed)*(nsignalLep==1)*(nbaselineLep==1)*(eT_miss>250)*(minDPhi_4jetMET>0.4)*(pT_1lep>20)"
-
-    selections["presel_2lep"]=selections['presel_common']+"*(nsignalLep==2)*(nbaselineLep==2)*(mll>81)*(mll<101)*(eT_miss<200)*(eT_miss_prime>250)*(minDPhi_4jetMET_prime>0.4)"
-
-getPreselections()
 
 def evaluate(model, test_loader, signals=None):
     mse = []
@@ -122,8 +95,7 @@ def solver(args, model, train_loader, test_loader, signals):
         if args.time_throughput:
             ender.record()
             torch.cuda.synchronize()
-            global total_throughput_time
-            total_throughput_time += starter.elapsed_time(ender)/1000
+            globals.total_throughput_time += starter.elapsed_time(ender)/1000
         
         model.eval()
         # evaluate on train data
@@ -158,17 +130,6 @@ def plot_and_save(name, test_data_list, train_data_list=None):
     
     plt.ylabel(ylabel)
     plt.savefig(savename, bbox_inches='tight')
-
-# set random seeds
-def fix_randomness(seed: int, deterministic: bool = False) -> None:
-    # pl.seed_everything(seed, workers=True)
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    if deterministic:
-        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":16:8"
-        torch.backends.cudnn.benchmark = False
-        torch.use_deterministic_algorithms(True)
 
 if __name__ == '__main__':
 
@@ -254,144 +215,13 @@ if __name__ == '__main__':
     if args.randseed != 0:
         fix_randomness(args.randseed, True)
 
-    # Load data
-    allSamps = pd.read_hdf(args.data)
-
-    # get selection
-    presel = selections['presel_0lep_1cjet20'].replace('*', ' & ').replace('||', ' | ').replace('(', '(allSamps.').replace('allSamps.(', '(')
-    print(presel)
-    #print(sorted(branches))
-    myPresel = (allSamps.passTightCleanDFFlag==1) & (allSamps.nj_good>=2) & ((allSamps.tcMeTCategory==1) | (allSamps.tcMeTCategory<0)) & (allSamps.pT_1jet>250) & (allSamps.num_bjets==0) & ((allSamps.GenFiltMET<100 ) |  (allSamps.RunNumber!=410470)) & (allSamps.nsignalLep==0) & (allSamps.nbaselineLep==0) & (allSamps.eT_miss>250) & (allSamps.minDPhi_4jetMET>0.4) & (allSamps.num_cjets20>=2)
-
-    # apply selection
-    rawDataPresel = allSamps[eval(presel)].copy()
-    sampSizes = {}
-    sampYields = {}
-    print('sampNames: ', sorted(pd.unique(rawDataPresel.sampName)))
-    for sampName in sorted(pd.unique(rawDataPresel.sampName)):
-        sampIndex = rawDataPresel['sampName']==sampName
-        sampYield = rawDataPresel[sampIndex].weight.sum()
-        if sampYield == 0:
-            print("Dropping", sampName)
-            rawDataPresel.drop(sampIndex)
-        sampSizes[sampName] = rawDataPresel[sampIndex].shape[0]
-        sampYields[sampName] = sampYield
-        # print(sampName, round(sampYield,1), sampIndex.sum())
-
-    # calculate weight to balance signal samples
-    maxYieldKey = max(sampYields, key=lambda k: sampYields[k])
-    tempDFs = []
-    goodSamps = pd.unique(rawDataPresel.sampName)
-    for sampName in sampYields:
-        sampIndex = rawDataPresel['sampName']==sampName
-        rawDataPresel.loc[sampIndex, 'clus_weight'] = rawDataPresel.loc[sampIndex, 'weight']*(sampYields[maxYieldKey]/sampYields[sampName])
-        #print(rawDataPresel[sampIndex].clus_weight.sum())
-
-    # define training variables
-    # Tried adding more variables but this seems to cause a degradation in performance: only one signal cluster is found.
-    # (two are expected based on the manually designed signal regions).
+    # set signals and variables to operate on
+    signals = ['sig_1300_1', 'sig_550_375']
     trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1jet', 'pT_2jet', 'sampName']#, 'pT_1cjet', 'pT_2cjet']# 'eT_miss']
-    varListStr = '_'.join(trainBranches)
-    # print('varListStr:',varListStr)
-
-    # columns to be used, get rid of 'sampName'
-    inputColumns = trainBranches.copy()
-    inputColumns.remove('sampName')
-
-    # scale data: normalize to max value
-    scaledData = rawDataPresel.copy(deep=True)
-    scalers = {}
-    maxvalue = 0.
-    for column in trainBranches:
-        if 'sampName' in column: continue
-        # scalers[column] = MinMaxScaler()
-        # scaledData[[column]] = scalers[column].fit_transform(scaledData[[column]])
-        colmax = scaledData[column].max()
-        if colmax > maxvalue:
-            maxvalue = colmax
-    scaledData[inputColumns] = scaledData[inputColumns] / maxvalue
-
-    # data for clustering
-    clusteringData = scaledData[trainBranches]
-
-    # select signal samples
-    signals = ['sig_1300_1','sig_550_375'] #, 'sig_900_600']
-    print('using only samples: ',signals)
-    signalsMap = {}
-    for i, signal in enumerate(signals):
-        signalsMap[signal] = i
-        try:
-            signalMask |= scaledData.sampName == signal
-        except:
-            signalMask = scaledData.sampName == signal
-    twoSigs = scaledData[signalMask]
-    # data for AE
-    aeData = twoSigs[trainBranches]
-    aeSampName = twoSigs['sampName']
-
-    # I want to make the two samples balanced (similar as above...)
-    # I'll calculate the total sum-of-weights for each sample and I'll scale with 1 over it
-    norm_weights = {}
-    for s in signals:
-        sumOfWeights = twoSigs[twoSigs.sampName == s].AnalysisWeight.sum()
-        norm_weights[s] = sumOfWeights
-
-    # add to new column called norm_weight
-    for s in signals:
-        norm_weight = norm_weights[s]
-        sampIndex = twoSigs.sampName == s
-        twoSigs.loc[sampIndex, 'norm_weight'] = twoSigs.loc[sampIndex, 'AnalysisWeight']/(norm_weight)
-
-    # select which weight to be used. In the current implementation of DCN this is not used anyways
-    # tempWeights = twoSigs['AnalysisWeight']
-    # tempWeights = twoSigs['clus_weight']
-    tempWeights = twoSigs['norm_weight']
-
-    # print data characteristics
-    print('aeData.shape:', aeData.shape)
-    print('aeData.columns:', aeData.columns) 
-    print('tempWeights.shape:', tempWeights.shape)
-    print('samples:', aeSampName.unique())
-    tmp = aeData.apply(lambda s: pd.Series([s.min(), s.max()],index=['min', 'max']))
-    print(f'tmp = {tmp}')
-
-    # batch size and test/train fraction
-    batch_size = args.batch_size
-    testTrainFrac = 0.7
-    # config for throughput timing
-    # curently vaiable with the available data
-    if args.time_throughput:
-        batch_size = 4096
-        testTrainFrac = 0.9
-        args.epoch = 100
-        total_throughput_time = 0
-        
-    # select events
-    nEvents=aeData.shape[0]
-    nTrain = np.floor(nEvents*testTrainFrac)
-    # use an integer number of batches, i.e. all batches used have the same number of events
-    newNTrain = int(np.floor(nTrain/batch_size)*batch_size)
-    msk = np.random.choice(nEvents, newNTrain, replace=False)
-    
-    # train np.arrays
-    train_inputs = aeData[inputColumns].to_numpy()[msk]
-    train_targets = aeData['sampName'].map(signalsMap).to_numpy()[msk]
-
-    # test np.arrays
-    test_inputs = aeData[inputColumns].to_numpy()[~msk]
-    test_targets = aeData['sampName'].map(signalsMap).to_numpy()[~msk]
-
-    # train & test weights. not used anyways
-    trainWeights = torch.Tensor(tempWeights.to_numpy()[msk])
-    testWeights = torch.Tensor(tempWeights.to_numpy()[~msk])
-
-    # torch TensorDatasets
-    trainDataset = torch.utils.data.TensorDataset(torch.Tensor(train_inputs),torch.Tensor(train_targets), trainWeights) # create your datset
-    testDataset = torch.utils.data.TensorDataset(torch.Tensor(test_inputs), torch.Tensor(test_targets), testWeights) # create your datset
-    
-    # torch DataLoaders
-    train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size)
-    test_loader = torch.utils.data.DataLoader(testDataset, batch_size=batch_size) 
+    # re-set the input dimentions
+    args.input_dim = len(trainBranches)-1
+    # get the train/test DataLoaders
+    train_loader, test_loader = get_DataLoaders(args, signals, trainBranches)
 
     print('number of train batches:',len(train_loader))
     print('number of test batches:',len(test_loader))
@@ -443,7 +273,7 @@ if __name__ == '__main__':
                                                                                              signals)
 
     if args.time_throughput:
-        print("Measured throughput: %i instances/sec" % (args.epoch*batch_size/total_throughput_time))
+        print("Measured throughput: %i instances/sec" % (args.epoch*batch_size/globals.total_throughput_time))
 
     # plot metrics calculated at evaluation on test_loader
     if not args.time_throughput:
