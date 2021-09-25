@@ -217,7 +217,7 @@ if __name__ == '__main__':
 
     # set signals and variables to operate on
     signals = ['sig_1300_1', 'sig_550_375']
-    trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1jet', 'pT_2jet', 'sampName']#, 'pT_1cjet', 'pT_2cjet']# 'eT_miss']
+    trainBranches = ['MTcMin20', 'metsigST', 'eT_miss', 'nj_good', 'pT_1jet', 'pT_2jet', 'num_bjets', 'num_cjets20', 'sampName'] # sampName should always stay here
     # re-set the input dimentions
     args.input_dim = len(trainBranches)-1
     # get the train/test DataLoaders
