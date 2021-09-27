@@ -5,6 +5,7 @@ import torch
 from sklearn.preprocessing import MinMaxScaler
 import pdb
 import collections
+import globals
 
 def getPreselections():
     global selections
@@ -130,11 +131,11 @@ def get_DataLoaders(args: argparse.Namespace, signals: list, trainBranches: list
     testTrainFrac = 0.7
     # config for throughput timing
     # curently vaiable with the available data. 
-    # Vangelis: todo adjust
+    # Vangelis: setting when using all the signal samples
     if args.time_throughput:
-        batch_size = 4096
+        batch_size = globals.timing_batch_size = 2**19
         testTrainFrac = 0.9
-        args.epoch = 100
+        args.epoch = globals.timing_epochs = 100
         
     # select events
     nEvents=aeData.shape[0]
@@ -156,7 +157,7 @@ def get_DataLoaders(args: argparse.Namespace, signals: list, trainBranches: list
     testWeights = torch.Tensor(tempWeights.to_numpy()[~msk])
 
     # torch TensorDatasets
-    trainDataset = torch.utils.data.TensorDataset(torch.Tensor(train_inputs),torch.Tensor(train_targets), trainWeights) # create your datset
+    trainDataset = torch.utils.data.TensorDataset(torch.Tensor(train_inputs), torch.Tensor(train_targets), trainWeights) # create your datset
     testDataset = torch.utils.data.TensorDataset(torch.Tensor(test_inputs), torch.Tensor(test_targets), testWeights) # create your datset
     
     # torch DataLoaders
