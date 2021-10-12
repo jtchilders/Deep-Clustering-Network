@@ -130,12 +130,12 @@ def get_DataLoaders(args: argparse.Namespace, signals: list, trainBranches: list
     batch_size = args.batch_size
     testTrainFrac = 0.7
     # config for throughput timing
-    # curently vaiable with the available data. 
-    # Vangelis: setting when using all the signal samples
+    # Vangelis: curently max vaiable setting when using all the signal samples: globals.timing_batch_size = 2**19
     if args.time_throughput:
-        batch_size = globals.timing_batch_size = 2**19
+        # batch_size = globals.timing_batch_size = 2**19
+        batch_size = globals.timing_batch_size = args.batch_size
         testTrainFrac = 0.9
-        args.epoch = globals.timing_epochs = 100
+        args.epoch = globals.timing_epochs = 50
         
     # select events
     nEvents=aeData.shape[0]

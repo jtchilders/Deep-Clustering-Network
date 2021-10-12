@@ -1,4 +1,5 @@
 import torch
+from torchsummary import summary
 import random
 import os, sys
 import argparse
@@ -195,5 +196,6 @@ if __name__ == '__main__':
                                            signals)
 
     if args.time_throughput:
-        print("Measured throughput: %i instances/sec" % (globals.timing_epochs*globals.timing_batch_size/globals.total_throughput_time))
-        print("Measured throughput (no data-transfer): %i instances/sec" % (globals.timing_epochs*globals.timing_batch_size/globals.total_throughput_time_noDT))
+        print("Using batch-size: %i instances" % (globals.timing_batch_size))
+        print("Measured throughput: %i instances/sec" % (globals.timing_epochs*globals.timing_batch_size*len(train_loader)/globals.total_throughput_time))
+        print("Measured throughput (no data-transfer): %i instances/sec" % (globals.timing_epochs*globals.timing_batch_size*len(train_loader)/globals.total_throughput_time_noDT))
