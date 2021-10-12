@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch
 from typing import Tuple
 import globals
+import pdb
 
 class autoencoder(nn.Module):
     def __init__(self, args) -> None:
@@ -10,13 +11,37 @@ class autoencoder(nn.Module):
         self.device = globals.device
         self.num_features = args.input_dim
         self.latent_dim = args.latent_dim
+        self.reduction = 2
 
+        # Figure out how many hidden dimensions we can have if we reduce the dimensionality by self.reduction for each layer
+        hiddenLayerInfo = []
+        nNodes = self.num_features
+        while nNodes > self.latent_dim+self.reduction:
+            inputNodes = nNodes
+            nNodes -= self.reduction
+            hiddenLayerInfo.append((inputNodes, nNodes))
+        hiddenLayerInfo.append((nNodes, self.latent_dim))
+
+        # construct encoder
+        hiddenEncoderLayers = []
+        for inputNodes, outputNodes in hiddenLayerInfo:
+            hiddenEncoderLayers.append(nn.Linear(inputNodes, outputNodes))
+            hiddenEncoderLayers.append(nn.ReLU())
+        # no ReLU on the output layer
+        hiddenEncoderLayers.pop()
         self.encoder = nn.Sequential(
-            nn.Linear(self.num_features, self.latent_dim),
-            nn.ReLU()
+            *hiddenEncoderLayers
         )
+        
+        # construct decoder
+        hiddenDecoderLayers = []
+        for outputNodes, inputNodes in reversed(hiddenLayerInfo):
+            hiddenDecoderLayers.append(nn.Linear(inputNodes, outputNodes))
+            hiddenDecoderLayers.append(nn.ReLU())
+        # no ReLU on the output layer
+        hiddenDecoderLayers.pop()
         self.decoder = nn.Sequential(
-            nn.Linear(self.latent_dim, self.num_features),
+            *hiddenDecoderLayers
         )
         
         self.criterion = nn.MSELoss()
