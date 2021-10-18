@@ -134,7 +134,7 @@ if __name__ == '__main__':
     # set signals and variables to operate on
     # signals = ['sig_1300_1', 'sig_550_375']
     signals = ['sig_1000_1', 'sig_1000_100', 'sig_1000_200', 'sig_1000_300', 'sig_1000_400', 'sig_1000_500', 'sig_1000_600', 'sig_1000_700', 'sig_1050_150', 'sig_1050_250', 'sig_1050_50', 'sig_1100_1', 'sig_1100_100', 'sig_1100_200', 'sig_1100_300', 'sig_1100_400', 'sig_1100_500', 'sig_1100_600', 'sig_1100_700', 'sig_1200_1', 'sig_1200_100', 'sig_1200_200', 'sig_1200_300', 'sig_1200_400', 'sig_1200_500', 'sig_1200_600', 'sig_1300_1', 'sig_1300_100', 'sig_1300_200', 'sig_1300_300', 'sig_1300_400', 'sig_1300_500', 'sig_400_225', 'sig_500_1', 'sig_500_325', 'sig_550_375', 'sig_600_1', 'sig_600_300', 'sig_600_425', 'sig_650_350', 'sig_650_475', 'sig_700_1', 'sig_700_100', 'sig_700_200', 'sig_700_300', 'sig_700_400', 'sig_700_525', 'sig_750_250', 'sig_750_350', 'sig_750_450', 'sig_750_575', 'sig_800_1', 'sig_800_100', 'sig_800_200', 'sig_800_300', 'sig_800_400', 'sig_800_500', 'sig_800_625', 'sig_850_150', 'sig_850_250', 'sig_850_350', 'sig_850_450', 'sig_850_50', 'sig_900_1', 'sig_900_100', 'sig_900_200', 'sig_900_300', 'sig_900_400', 'sig_900_500', 'sig_900_600', 'sig_950_150', 'sig_950_250', 'sig_950_350', 'sig_950_50']
-    trainBranches = ['MTcMin20', 'metsigST', 'eT_miss', 'nj_good', 'pT_1jet', 'pT_2jet', 'num_bjets', 'num_cjets20', 'sampName'] # sampName should always stay here
+    trainBranches = ['MTcMin20', 'metsigST', 'm_cc20', 'pT_1jet', 'pT_2jet', 'sampName'] # sampName should always stay here
     # re-set the input dimentions
     args.input_dim = len(trainBranches)-1
     # get the train/test DataLoaders

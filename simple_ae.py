@@ -13,6 +13,15 @@ class autoencoder(nn.Module):
         self.latent_dim = args.latent_dim
         self.reduction = 2
 
+        self.encoder = nn.Sequential(
+            nn.Linear(self.num_features, self.latent_dim),
+            nn.ReLU()
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(self.latent_dim, self.num_features),
+        )
+
+        ''' A version not working in SambaNova according to Walter
         # Figure out how many hidden dimensions we can have if we reduce the dimensionality by self.reduction for each layer
         hiddenLayerInfo = []
         nNodes = self.num_features
@@ -43,6 +52,7 @@ class autoencoder(nn.Module):
         self.decoder = nn.Sequential(
             *hiddenDecoderLayers
         )
+        '''
         
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.parameters(), lr=args.lr)
