@@ -1,5 +1,4 @@
 import torch
-from torchsummary import summary
 import random
 import os, sys
 import argparse
