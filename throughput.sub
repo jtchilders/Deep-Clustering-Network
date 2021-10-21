@@ -1,0 +1,14 @@
+#!/bin/bash
+#
+#SBATCH --job-name=measure-throughput
+#SBATCH --account=ATLAS-HEP-GROUP
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:1
+#SBATCH --exclusive
+#SBATCH --time=24:00:00
+
+module load anaconda3
+source activate DCN
+cd /home/ekourlitis/Deep-Clustering-Network
+
+srun ./run_throughput.sh
