@@ -71,6 +71,7 @@ class autoencoder(nn.Module):
 
             # throughput measurement - start
             if self.args.time_throughput:
+                torch.cuda.synchronize() # be sure that the data moving has been completed
                 starter_noDT, ender_noDT = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
                 starter_noDT.record()
 
